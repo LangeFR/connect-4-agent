@@ -13,61 +13,107 @@ class ConnectState(EnvironmentState):
     ROWS = 6
     COLS = 7
 
-    def __init__(self, board: np.ndarray | None = None, player: int = -1):
+    def __init__(
+        self,
+        board: np.ndarray | None = None,
+        player: int = -1,
+        last_move: tuple[int, int] | None = None,
+        heights: list[int] | None = None,
+    ):
         if board is None:
             self.board = np.zeros((self.ROWS, self.COLS), dtype=int)
         else:
             self.board = board.copy()
-        self.player = player  # -1 = Red, 1 = Yellow type: ignore
+        self.player = player
+        self.last_move = last_move
+        self._winner: int | None = None
+
+        if heights is not None:
+            self.heights = heights.copy()
+        else:
+            # reconstruir alturas desde el board (solo cuando se crea el estado raíz)
+            self.heights = [0] * self.COLS
+            for c in range(self.COLS):
+                col_vals = self.board[:, c]
+                # número de fichas en la columna = celdas != 0
+                self.heights[c] = int(np.count_nonzero(col_vals))
+
+
 
     def is_final(self) -> bool:
-        return self.get_winner() != 0 or not any(self.board[0] == 0)
+        # ganador por last_move
+        if self.get_winner() != 0:
+            return True
+        # empate: todas las columnas llenas
+        return all(h == self.ROWS for h in self.heights)
+
 
     def is_applicable(self, event: Any) -> bool:
         return (
             isinstance(event, int)
             and 0 <= event < self.COLS
             and self.is_col_free(event)
-            and not self.is_final()
         )
-
+    
     def get_winner(self) -> int:
-        # Check all 4 directions
-        for r in range(self.ROWS):
-            for c in range(self.COLS):
-                player = self.board[r, c]
-                if player == 0:
-                    continue
+        """
+        Devuelve el jugador ganador (-1 o 1) si hay cuatro en línea
+        pasando por la última jugada; 0 en caso contrario.
+        Usa un caché interno para evitar recalcular muchas veces.
+        """
+        if self._winner is not None:
+            return self._winner
 
-                # Right
-                if c + 3 < self.COLS and all(
-                    self.board[r, c + i] == player for i in range(4)
-                ):
-                    return player
-                # Down
-                if r + 3 < self.ROWS and all(
-                    self.board[r + i, c] == player for i in range(4)
-                ):
-                    return player
-                # Diagonal right-down
-                if (
-                    r + 3 < self.ROWS
-                    and c + 3 < self.COLS
-                    and all(self.board[r + i, c + i] == player for i in range(4))
-                ):
-                    return player
-                # Diagonal left-down
-                if (
-                    r + 3 < self.ROWS
-                    and c - 3 >= 0
-                    and all(self.board[r + i, c - i] == player for i in range(4))
-                ):
-                    return player
+        if self.last_move is None:
+            self._winner = 0
+            return 0
 
+        row, col = self.last_move
+        player = self.board[row, col]
+
+        if player == 0:
+            self._winner = 0
+            return 0
+
+        def count_direction(dr: int, dc: int) -> int:
+            r = row + dr
+            c = col + dc
+            count = 0
+            while (
+                0 <= r < self.ROWS
+                and 0 <= c < self.COLS
+                and self.board[r, c] == player
+            ):
+                count += 1
+                r += dr
+                c += dc
+            return count
+
+        # Horizontal
+        if 1 + count_direction(0, -1) + count_direction(0, 1) >= 4:
+            self._winner = player
+            return player
+
+        # Vertical
+        if 1 + count_direction(-1, 0) + count_direction(1, 0) >= 4:
+            self._winner = player
+            return player
+
+        # Diagonal principal
+        if 1 + count_direction(-1, -1) + count_direction(1, 1) >= 4:
+            self._winner = player
+            return player
+
+        # Diagonal secundaria
+        if 1 + count_direction(-1, 1) + count_direction(1, -1) >= 4:
+            self._winner = player
+            return player
+
+        self._winner = 0
         return 0
 
     def is_col_free(self, col: int) -> bool:
-        return self.board[0, col] == 0
+        return self.heights[col] < self.ROWS
 
     def get_heights(self) -> list[int]:
         heights = []
@@ -82,20 +128,33 @@ class ConnectState(EnvironmentState):
         return heights
 
     def get_free_cols(self) -> list[int]:
-        return [c for c in range(self.COLS) if self.is_col_free(c)]
+        return [c for c in range(self.COLS) if self.heights[c] < self.ROWS]
 
     def transition(self, col: int) -> "ConnectState":
         if not self.is_applicable(col):
             raise ValueError(f"Move not allowed in column {col}.")
 
+        # copiar tablero y alturas
         new_board = self.board.copy()
-        for r in reversed(range(self.ROWS)):
-            if new_board[r, col] == 0:
-                new_board[r, col] = self.player
-                break
+        new_heights = self.heights.copy()
 
-        return ConnectState(new_board, -self.player)
+        # fila en la que cae la nueva ficha
+        current_height = new_heights[col]
+        if current_height >= self.ROWS:
+            raise ValueError(f"Column {col} is full.")
 
+        row_played = self.ROWS - 1 - current_height
+
+        new_board[row_played, col] = self.player
+        new_heights[col] += 1
+
+        return ConnectState(
+            new_board,
+            -self.player,
+            last_move=(row_played, col),
+            heights=new_heights,
+        )
+    
     def show(self, size: int = 1500, ax: plt.Axes | None = None) -> None:
         if ax is None:
             fig, ax = plt.subplots()
