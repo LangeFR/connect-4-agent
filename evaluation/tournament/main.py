@@ -1,5 +1,5 @@
 from agent.policy import Policy
-from connect4.utils import find_importable_classes
+from evaluation.tournament.utils import find_importable_classes
 from evaluation.tournament.tournament import run_tournament, play
 
 # Read all files within subfolder of "groups"
