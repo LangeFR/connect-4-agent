@@ -1,6 +1,8 @@
 from pydantic import BaseModel, ConfigDict, Field
-from agent.policy import Policy
 import numpy as np
+
+from typing import Any
+Policy = Any
 
 State = np.ndarray
 Action = int
