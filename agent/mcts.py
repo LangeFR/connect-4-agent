@@ -184,14 +184,13 @@ def _default_policy_tbopi(
     """
     current = state
     depth = 0
-    trajectory = []  # lista de (state_key, action) visitados en el rollout
+    trajectory = []  # (state_key, action, player_who_acted)
 
     while not current.is_final() and depth < max_depth_remaining:
         legal_actions = get_legal_actions(current)
         if not legal_actions:
             break
 
-        # Clave de estado para la Q-table del agente
         state_key = agent._get_state_key(current)
 
         q_actions = agent._get_q_for_state(state_key)  # {a: (N, Q)}
@@ -251,27 +250,41 @@ def _default_policy_tbopi(
         if chosen_action is None:
             chosen_action = random.choice(legal_actions)
 
-        # Guardar en la trayectoria para actualizar Q al final
-        trajectory.append((state_key, chosen_action))
-
-        # Avanzar al siguiente estado
+        trajectory.append((state_key, chosen_action, player))
         current = current.transition(chosen_action)
         depth += 1
 
-    # Recompensa terminal desde el punto de vista del root_player
     winner = current.get_winner()
+
+    for state_key, action, actor in trajectory:
+        if winner == actor:
+            r = 1.0
+        elif winner == 0:
+            r = 0.0
+        else:
+            r = -1.0
+        agent.update_q_with_terminal_reward(state_key, action, r)
+        
+
+    for state_key, action, actor in trajectory:
+        if winner == actor:
+            r = 1.0
+        elif winner == 0:
+            r = 0.0
+        else:
+            r = -1.0
+        agent.update_q_with_terminal_reward(state_key, action, r)
+        
     if winner == root_player:
-        reward = 1.0
+        reward_root_root = 1.0
     elif winner == 0:
-        reward = 0.0
+        reward_root_root = 0.0
     else:
-        reward = -1.0
+        reward_root = -1.0
+        reward_root = -1.0
 
-    # Actualizar Q(s,a) para TODA la trayectoria (Monte Carlo)
-    for state_key, action in trajectory:
-        agent.update_q_with_terminal_reward(state_key, action, reward)
-
-    return reward
+    return reward_root
+    return reward_root
 
 
 def _backup(node: MCTSNode, reward_root: float, root_player: int) -> None:
