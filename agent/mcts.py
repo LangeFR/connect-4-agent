@@ -169,17 +169,18 @@ def _default_policy_tbopi(
     max_depth_remaining: int,
     agent,
     epsilon: float = 0.2,
+    eps_unknown: float = 0.4,
 ) -> float:
     """
-    Rollout para TBOPI: usa Q(s,a) tabular del agent + heurística como fallback.
+    Rollout para TBOPI con exploración explícita de acciones sin Q:
 
-    - En cada estado del rollout:
-        - Si hay Q(s,a) para ese estado y alguna acción legal, se hace
-          epsilon-greedy sobre Q.
-        - Si no hay información, se usa la misma heurística que en _default_policy
-          (ganar en 1, bloquear, columna central, random).
-    - Al final, se actualiza Q(s,a) para toda la trayectoria con la recompensa
-      terminal (Monte Carlo).
+    - En cada estado:
+        0) (opcional) ganar en 1 / bloquear.
+        1) Con prob. eps_unknown, si hay acciones sin Q(s,a), explora una al azar.
+        2) Si no, con prob. 1-epsilon usa Q(s,a) entre acciones conocidas (argmax Q).
+        3) Si no aplica nada de lo anterior, heurística clásica
+           (ganar en 1, bloquear, centro, random).
+    - Al final, se actualiza Q(s,a) para toda la trayectoria con la recompensa terminal.
     """
     current = state
     depth = 0
@@ -193,52 +194,62 @@ def _default_policy_tbopi(
         # Clave de estado para la Q-table del agente
         state_key = agent._get_state_key(current)
 
+        q_actions = agent._get_q_for_state(state_key)  # {a: (N, Q)}
+        known_actions = {
+            a: stats for a, stats in q_actions.items() if a in legal_actions
+        }
+        unknown_actions = [a for a in legal_actions if a not in q_actions]
+
         chosen_action = None
 
-        # Intentar usar Q(s,a) si hay información
-        q_actions = agent._get_q_for_state(state_key)
-        # Filtramos solo acciones legales
-        q_legal = {a: stats for a, stats in q_actions.items() if a in legal_actions}
+        # ganar en 1 / bloquear 
+        player = current.player
+        opponent = -player
 
-        use_q = bool(q_legal) and (random.random() > epsilon)
+        # ganar en 1
+        for a in legal_actions:
+            if is_winning_move(current, a, player):
+                chosen_action = a
+                break
 
-        if use_q:
-            # stats = (N, Q_val). Usamos Q_val para explotar.
-            def q_value_of(action: int) -> float:
-                N, Q_val = q_legal[action]
-                return Q_val
-
-            chosen_action = max(q_legal.keys(), key=q_value_of)
-
+        # bloquear en 1
         if chosen_action is None:
-            # Fallback: heurística igual a _default_policy
-            player = current.player
-            opponent = -player
-
-            # 1) Intentar ganar en 1 jugada
             for a in legal_actions:
-                if is_winning_move(current, a, player):
+                if is_winning_move(current, a, opponent):
                     chosen_action = a
                     break
 
-            # 2) Intentar bloquear victoria inmediata del rival
-            if chosen_action is None:
-                for a in legal_actions:
-                    if is_winning_move(current, a, opponent):
-                        chosen_action = a
-                        break
+        # 1) Explorar acciones sin Q(s,a)
+        if chosen_action is None and unknown_actions and random.random() < eps_unknown:
+            chosen_action = random.choice(unknown_actions)
 
-            # 3) Heurística: preferir columnas centrales
-            if chosen_action is None:
-                center_order = [3, 2, 4, 1, 5, 0, 6]
-                for c in center_order:
-                    if c in legal_actions:
-                        chosen_action = c
-                        break
+        # 2) Usar Q(s,a) entre acciones conocidas (epsilon-greedy)
+        use_q = (
+            chosen_action is None
+            and bool(known_actions)
+            and (random.random() > epsilon)
+        )
 
-            # 4) Fallback: aleatorio
-            if chosen_action is None:
-                chosen_action = random.choice(legal_actions)
+        if use_q and chosen_action is None:
+            # stats = (N, Q_val)
+            def q_value_of(action: int) -> float:
+                N, Q_val = known_actions[action]
+                return Q_val
+
+            chosen_action = max(known_actions.keys(), key=q_value_of)
+
+        # 3) Heurística clásica como fallback
+        if chosen_action is None:
+            # Preferir columnas centrales
+            center_order = [3, 2, 4, 1, 5, 0, 6]
+            for c in center_order:
+                if c in legal_actions:
+                    chosen_action = c
+                    break
+
+        # 4) Fallback: aleatorio
+        if chosen_action is None:
+            chosen_action = random.choice(legal_actions)
 
         # Guardar en la trayectoria para actualizar Q al final
         trajectory.append((state_key, chosen_action))

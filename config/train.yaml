@@ -1,0 +1,37 @@
+train:
+  # Modo de entrenamiento:
+  #  - "random"   -> vs agente aleatorio
+  #  - "self_play"-> self-play simétrico
+  #  - "old_play" -> vs política congelada (baseline)
+  mode: "old_play"
+
+  # Número de partidas de entrenamiento
+  num_games: 200
+
+agent_rules:
+  # ¿El agente que entrena debe bloquear mates en 1?
+  agent_enable_block: false
+
+  # ¿El oponente debe bloquear mates en 1?
+  opponent_enable_block: true
+
+  # ¿El agente que entrena debe FORZAR ganar en 1 cuando puede?
+  agent_enable_win_in_1: false
+
+  # ¿El oponente debe FORZAR ganar en 1 cuando puede?
+  opponent_enable_win_in_1: true
+
+logging:
+  # Traza de movimientos por episodio
+  debug_train_moves: false        # pon true cuando quieras ver jugadas completas
+  debug_train_max_episodes_log: 20  # cuántos episodios loguear como máximo
+
+  # Volcar estados finales de las partidas de entrenamiento
+  dump_train_final_states: true
+
+paths:
+  # Ruta del modelo baseline congelado (antes OLD_MODEL_PATH / BASELINE_MODEL_PATH)
+  baseline_model_path: "models/baselines/old_policy_model.json"
+
+  # Ruta donde volcar estados finales de entrenamiento
+  train_dump_path: "debug/train_final_states.txt"

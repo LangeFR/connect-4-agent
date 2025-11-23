@@ -7,9 +7,9 @@ MODEL_PATH = "models/current/policy_model.json"
 @dataclass
 class MCTSConfig:
     # Número de simulaciones MCTS por movimiento
-    n_simulations: int = 200
+    n_simulations: int = 300
     # Constante de exploración de UCB
-    c_explore: float = 2.5
+    c_explore: float = 1.4
     # Profundidad máxima de las simulaciones (rollouts)
     max_depth: int = 42  # máximo de turnos posibles en Connect4
 
