@@ -161,43 +161,6 @@ class GroupAPolicy(Policy):
             # Si hay cualquier problema leyendo el archivo, seguimos sin tabla
             self.stats_table = {}
 
-    def _select_with_ucb(self, key: str, legal: list[int]) -> int | None:
-        """
-        Selecciona una acción usando UCB sobre la tabla (N,Q) de policy_model.json
-        para el estado 'key'. Devuelve None si no hay datos útiles.
-        """
-        state_stats = self.stats_table.get(key)
-        if not state_stats:
-            return None
-
-        # Total de visitas del estado (aprox): suma de N(a)
-        total_N = sum(max(1, int(s["N"])) for s in state_stats.values())
-        if total_N <= 0:
-            return None
-
-        best_action = None
-        best_score = -float("inf")
-
-        for a in legal:
-            stats_a = state_stats.get(a)
-            if not stats_a:
-                continue
-
-            N_sa = max(1, int(stats_a["N"]))
-            Q_sa = float(stats_a["Q"])
-
-            # UCB1
-            exploration = self.c_explore * math.sqrt(
-                math.log(total_N + 1.0) / N_sa
-            )
-            score = Q_sa + exploration
-
-            if score > best_score:
-                best_score = score
-                best_action = a
-
-        return None if best_action is None else int(best_action)
-
     def act(self, s: np.ndarray) -> int:
         """
         Recibe el tablero como np.ndarray(6x7) con valores -1, 0, 1
@@ -222,18 +185,23 @@ class GroupAPolicy(Policy):
             if newb is not None and _win(newb, self.opp):
                 return int(c)
 
-        # 3) Intentar usar policy_model.json con UCB
+        # 3) Intentar usar policy_model.json (acción greedy sobre Q)
         if self.stats_table:
             key = _encode_state(board)
-            # OJO: estos prints puedes comentarlos si quieres menos ruido
-            if key in self.stats_table:
-                # print("✓ KEY ENCONTRADA:", key)
-                action_ucb = self._select_with_ucb(key, legal)
-                if action_ucb is not None:
-                    return int(action_ucb)
-            else:
-                # print("✗ KEY NO EXISTE:", key)
-                pass
+            state_stats = self.stats_table.get(key)
+            if state_stats:
+                best_action = None
+                best_q = -float("inf")
+                for a in legal:
+                    stats_a = state_stats.get(a)
+                    if not stats_a:
+                        continue
+                    q_val = float(stats_a.get("Q", 0.0))
+                    if q_val > best_q:
+                        best_q = q_val
+                        best_action = a
+                if best_action is not None:
+                    return int(best_action)
 
         # 4) Heurística de preferencia por el centro
         for c in [3, 2, 4, 1, 5, 0, 6]:
