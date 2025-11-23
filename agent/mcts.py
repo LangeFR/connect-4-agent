@@ -258,20 +258,25 @@ def _default_policy_tbopi(
         current = current.transition(chosen_action)
         depth += 1
 
-    # Recompensa terminal desde el punto de vista del root_player
     winner = current.get_winner()
+
+    for state_key, action, actor in trajectory:
+        if winner == actor:
+            r = 1.0
+        elif winner == 0:
+            r = 0.0
+        else:
+            r = -1.0
+        agent.update_q_with_terminal_reward(state_key, action, r)
+        
     if winner == root_player:
-        reward = 1.0
+        reward_root = 1.0
     elif winner == 0:
-        reward = 0.0
+        reward_root = 0.0
     else:
-        reward = -1.0
+        reward_root = -1.0
 
-    # Actualizar Q(s,a) para TODA la trayectoria (Monte Carlo)
-    for state_key, action in trajectory:
-        agent.update_q_with_terminal_reward(state_key, action, reward)
-
-    return reward
+    return reward_root
 
 
 def _backup(node: MCTSNode, reward: float) -> None:
