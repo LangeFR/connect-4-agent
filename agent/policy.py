@@ -101,9 +101,11 @@ class GroupAPolicy(Policy):
         self.opp = 1
         # Q-table: state_key -> {action -> Q_value}
         self.q_table: dict[str, dict[int, float]] = {}
+        # Timeout por jugada
+        self.time_out: int = 10
 
 
-    def mount(self) -> None:
+    def mount(self, time_out: float | None = None) -> None:
         """
         Inicialización "pesada": cargar el modelo de política si existe.
         Si algo falla, simplemente no se usa policy_table.
@@ -123,7 +125,7 @@ class GroupAPolicy(Policy):
                     if not isinstance(actions_dict, dict):
                         continue
 
-                    inner: dict[int, float] = {}
+                    inner: dict[int, dict[str, float]] = {}
                     for action_str, stats in actions_dict.items():
                         try:
                             action_int = int(action_str)
@@ -133,12 +135,18 @@ class GroupAPolicy(Policy):
                         if not isinstance(stats, dict):
                             continue
 
+                        # Leemos N y Q con defaults seguros
+                        try:
+                            n_val = int(stats.get("N", 0))
+                        except (TypeError, ValueError):
+                            n_val = 0
+
                         try:
                             q_val = float(stats.get("Q", 0.0))
                         except (TypeError, ValueError):
-                            continue
+                            q_val = 0.0
 
-                        inner[action_int] = q_val
+                        inner[action_int] = {"N": n_val, "Q": q_val}
 
                     if inner:
                         table[str(state_key)] = inner
@@ -148,6 +156,42 @@ class GroupAPolicy(Policy):
             # Si hay cualquier problema leyendo el archivo, seguimos sin tabla
             self.q_table = {}
 
+    def _select_with_ucb(self, key: str, legal: list[int]) -> int | None:
+        """
+        Selecciona una acción usando UCB sobre la tabla (N,Q) de policy_model.json
+        para el estado 'key'. Devuelve None si no hay datos útiles.
+        """
+        state_stats = self.stats_table.get(key)
+        if not state_stats:
+            return None
+
+        # Total de visitas del estado (aprox): suma de N(a)
+        total_N = sum(max(1, int(s["N"])) for s in state_stats.values())
+        if total_N <= 0:
+            return None
+
+        best_action = None
+        best_score = -float("inf")
+
+        for a in legal:
+            stats_a = state_stats.get(a)
+            if not stats_a:
+                continue
+
+            N_sa = max(1, int(stats_a["N"]))
+            Q_sa = float(stats_a["Q"])
+
+            # UCB1
+            exploration = self.c_explore * math.sqrt(
+                math.log(total_N + 1.0) / N_sa
+            )
+            score = Q_sa + exploration
+
+            if score > best_score:
+                best_score = score
+                best_action = a
+
+        return None if best_action is None else int(best_action)
 
 
     def act(self, s: np.ndarray) -> int:
@@ -174,23 +218,18 @@ class GroupAPolicy(Policy):
             if newb is not None and _win(newb, self.opp):
                 return int(c)
 
-        # 3) Intentar usar policy_model.json (Q-table) si hay entrada para este estado
-        if self.q_table:
+        # 3) Intentar usar policy_model.json con UCB
+        if self.stats_table:
             key = _encode_state(board)
-            if key in self.q_table:
-                print("✓ KEY ENCONTRADA:", key)
+            # OJO: estos prints puedes comentarlos si quieres menos ruido
+            if key in self.stats_table:
+                # print("✓ KEY ENCONTRADA:", key)
+                action_ucb = self._select_with_ucb(key, legal)
+                if action_ucb is not None:
+                    return int(action_ucb)
             else:
-                print("✗ KEY NO EXISTE:", key)
-            actions_dict = self.q_table.get(key)
-            if actions_dict:
-                best_action = None
-                best_q = -float("inf")
-                for a, q_val in actions_dict.items():
-                    if a in legal and q_val > best_q:
-                        best_q = q_val
-                        best_action = a
-                if best_action is not None:
-                    return int(best_action)
+                # print("✗ KEY NO EXISTE:", key)
+                pass
 
 
         # 4) Heurística de preferencia por el centro
