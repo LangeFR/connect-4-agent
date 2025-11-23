@@ -172,106 +172,96 @@ def _default_policy_tbopi(
     eps_unknown: float = 0.4,
 ) -> float:
     """
-    Rollout para TBOPI con exploración explícita de acciones sin Q:
-
-    - En cada estado:
-        0) (opcional) ganar en 1 / bloquear.
-        1) Con prob. eps_unknown, si hay acciones sin Q(s,a), explora una al azar.
-        2) Si no, con prob. 1-epsilon usa Q(s,a) entre acciones conocidas (argmax Q).
-        3) Si no aplica nada de lo anterior, heurística clásica
-           (ganar en 1, bloquear, centro, random).
-    - Al final, se actualiza Q(s,a) para toda la trayectoria con la recompensa terminal.
+    Rollout TBOPI con recompensa por jugador-local:
+    Cada par (state_key, action) se actualiza con +1/-1/0 según
+    si *el jugador que hizo esa acción* ganó/perdió/empató.
     """
     current = state
     depth = 0
-    trajectory = []  # lista de (state_key, action) visitados en el rollout
+    trajectory = []  # (state_key, action, player_who_acted)
 
     while not current.is_final() and depth < max_depth_remaining:
         legal_actions = get_legal_actions(current)
         if not legal_actions:
             break
 
-        # Clave de estado para la Q-table del agente
         state_key = agent._get_state_key(current)
+        q_actions = agent._get_q_for_state(state_key)
 
-        q_actions = agent._get_q_for_state(state_key)  # {a: (N, Q)}
-        known_actions = {
-            a: stats for a, stats in q_actions.items() if a in legal_actions
-        }
-        unknown_actions = [a for a in legal_actions if a not in q_actions]
+        known_actions = {a: stats for a, stats in q_actions.items() if a in legal_actions}
+        unknown_actions = [a for a in legal_actions if a not in known_actions]
 
         chosen_action = None
 
-        # ganar en 1 / bloquear 
         player = current.player
         opponent = -player
 
-        # ganar en 1
+        # 1) Ganar en 1
         for a in legal_actions:
             if is_winning_move(current, a, player):
                 chosen_action = a
                 break
 
-        # bloquear en 1
+        # 2) Bloquear
         if chosen_action is None:
             for a in legal_actions:
                 if is_winning_move(current, a, opponent):
                     chosen_action = a
                     break
 
-        # 1) Explorar acciones sin Q(s,a)
-        if chosen_action is None and unknown_actions and random.random() < eps_unknown:
+        # 3) Explorar acciones sin Q
+        if (
+            chosen_action is None 
+            and unknown_actions 
+            and random.random() < eps_unknown
+        ):
             chosen_action = random.choice(unknown_actions)
 
-        # 2) Usar Q(s,a) entre acciones conocidas (epsilon-greedy)
-        use_q = (
+        # 4) Exploitar Q (epsilon-greedy)
+        if (
             chosen_action is None
-            and bool(known_actions)
-            and (random.random() > epsilon)
-        )
-
-        if use_q and chosen_action is None:
-            # stats = (N, Q_val)
-            def q_value_of(action: int) -> float:
-                N, Q_val = known_actions[action]
-                return Q_val
-
+            and known_actions
+            and random.random() > epsilon
+        ):
+            def q_value_of(a):
+                return known_actions[a][1]  # Q
             chosen_action = max(known_actions.keys(), key=q_value_of)
 
-        # 3) Heurística clásica como fallback
+        # 5) Heurística
         if chosen_action is None:
-            # Preferir columnas centrales
-            center_order = [3, 2, 4, 1, 5, 0, 6]
+            center_order = [3,2,4,1,5,0,6]
             for c in center_order:
                 if c in legal_actions:
                     chosen_action = c
                     break
 
-        # 4) Fallback: aleatorio
+        # 6) Random fallback
         if chosen_action is None:
             chosen_action = random.choice(legal_actions)
 
-        # Guardar en la trayectoria para actualizar Q al final
-        trajectory.append((state_key, chosen_action))
-
-        # Avanzar al siguiente estado
+        trajectory.append((state_key, chosen_action, player))
         current = current.transition(chosen_action)
         depth += 1
 
-    # Recompensa terminal desde el punto de vista del root_player
     winner = current.get_winner()
+
+    for state_key, action, actor in trajectory:
+        if winner == actor:
+            r = 1.0
+        elif winner == 0:
+            r = 0.0
+        else:
+            r = -1.0
+        agent.update_q_with_terminal_reward(state_key, action, r)
+        
     if winner == root_player:
-        reward = 1.0
+        reward_root = 1.0
     elif winner == 0:
-        reward = 0.0
+        reward_root = 0.0
     else:
-        reward = -1.0
+        reward_root = -1.0
 
-    # Actualizar Q(s,a) para TODA la trayectoria (Monte Carlo)
-    for state_key, action in trajectory:
-        agent.update_q_with_terminal_reward(state_key, action, reward)
-
-    return reward
+    return reward_root
 
 
 def _backup(node: MCTSNode, reward: float) -> None:
