@@ -1,29 +1,37 @@
 import os
 import json
+import math
+from typing import Dict
+
 import numpy as np
 from connect4.policy import Policy
-#from connect4.agente.encoder import encode_state
 
+# Dimensiones fijas del tablero de Connect4
 ROWS = 6
 COLS = 7
-MODEL_PATH = "policy_model.json"
+
+# Ruta del modelo entrenado, consistente con agent/config.py
+MODEL_PATH = "models/current/policy_model.json"
 
 
-def _legal_actions(board: np.ndarray):
-    """Columnas donde la fila superior está vacía."""
-    legal = []
+def _legal_actions(board: np.ndarray) -> list[int]:
+    """
+    Columnas donde la casilla de la fila superior está vacía.
+    (mismas acciones legales que en ConnectState.get_free_cols)
+    """
+    legal: list[int] = []
     for c in range(COLS):
         if board[0, c] == 0:
             legal.append(c)
     return legal
 
 
-def _drop(board: np.ndarray, col: int, player: int):
+def _drop(board: np.ndarray, col: int, player: int) -> np.ndarray | None:
     """
     Simula dejar caer una ficha de 'player' en la columna 'col'.
     Devuelve un nuevo tablero o None si la columna está llena.
     """
-    r = max([r for r in range(ROWS) if board[r, col] == 0], default=None)
+    r = max((r for r in range(ROWS) if board[r, col] == 0), default=None)
     if r is None:
         return None
     newb = board.copy()
@@ -38,13 +46,13 @@ def _win(board: np.ndarray, player: int) -> bool:
     # Horizontal
     for r in range(ROWS):
         for c in range(COLS - 3):
-            if np.all(board[r, c:c + 4] == player):
+            if np.all(board[r, c : c + 4] == player):
                 return True
 
     # Vertical
     for r in range(ROWS - 3):
         for c in range(COLS):
-            if np.all(board[r:r + 4, c] == player):
+            if np.all(board[r : r + 4, c] == player):
                 return True
 
     # Diagonales
@@ -63,9 +71,9 @@ def _win(board: np.ndarray, player: int) -> bool:
 def _guess_current_player(board: np.ndarray) -> int:
     """
     Adivina quién juega:
-    - Suponemos que la partida empieza con -1.
-    - Si hay un número par de fichas, mueve -1; si impar, mueve 1.
-    Esto es solo para codificar el estado en policy_model.json.
+    - En tu ConnectState el juego empieza con player = -1.
+    - Tras cada jugada se alterna el jugador.
+    - Por tanto: si #fichas es par -> turno de -1, si es impar -> turno de 1.
     """
     tokens = int(np.count_nonzero(board))
     return -1 if tokens % 2 == 0 else 1
@@ -74,8 +82,12 @@ def _guess_current_player(board: np.ndarray) -> int:
 def _encode_state(board: np.ndarray) -> str:
     """
     Codifica el tablero como string para usar como llave en policy_model.json.
-    Formato: "<player>|<board_flattened>"
-    donde board_flattened es la concatenación de los 42 valores en orden fila-major.
+
+    Formato compatible con connect4.encoder.encode_state:
+        "<player>|<board_flattened>"
+
+    donde board_flattened es la concatenación de los 42 valores (-1,0,1)
+    en orden fila-major.
     """
     player = _guess_current_player(board)
     flat = board.flatten()
@@ -85,47 +97,56 @@ def _encode_state(board: np.ndarray) -> str:
 
 class GroupAPolicy(Policy):
     """
-    Política final:
-    - Juega como jugador -1.
-    - mount(): carga policy_model.json si existe.
-    - act(s): recibe un np.ndarray (6x7) y devuelve una columna (0..6).
+    Política que consume la Q-table entrenada por tu agente (policy_model.json).
+
     Prioridad de decisión:
-      1) Ganar en una jugada si es posible.
+      1) Ganar en una jugada si es posible (para el jugador al turno).
       2) Bloquear victoria inmediata del rival.
-      3) Usar policy_model.json si hay acción aprendida y es legal.
+      3) Usar policy_model.json con UCB sobre (N, Q) si hay datos.
       4) Heurística fija: preferencia por el centro (3,2,4,1,5,0,6).
+      5) Fallback: primera columna legal.
     """
 
     def __init__(self) -> None:
-        self.me = -1
-        self.opp = 1
-        # Q-table: state_key -> {action -> Q_value}
-        self.q_table: dict[str, dict[int, float]] = {}
-        # Timeout por jugada
-        self.time_out: int = 10
-
+        # stats_table: state_key -> { action -> {"N": int, "Q": float} }
+        self.stats_table: Dict[str, Dict[int, Dict[str, float]]] = {}
+        # Parámetro de exploración para UCB (alineado con MCTSConfig.c_explore)
+        self.c_explore: float = 2.5
+        # Timeout por jugada (lo exige la interfaz, aunque aquí no se use)
+        self.time_out: float = 10.0
 
     def mount(self, time_out: float | None = None) -> None:
         """
         Inicialización "pesada": cargar el modelo de política si existe.
-        Si algo falla, simplemente no se usa policy_table.
+
+        Lee models/current/policy_model.json con formato:
+        {
+          "state_key": {
+            "0": {"N": 10, "Q": 0.3},
+            "3": {"N": 15, "Q": 0.8}
+          },
+          ...
+        }
         """
+        if time_out is not None:
+            self.time_out = float(time_out)
+
         if not os.path.exists(MODEL_PATH):
+            self.stats_table = {}
             return
 
         try:
             with open(MODEL_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            # Ahora esperamos: state_key -> { action_str -> {"N": ..., "Q": ...} }
-            table: dict[str, dict[int, float]] = {}
+            table: Dict[str, Dict[int, Dict[str, float]]] = {}
 
             if isinstance(data, dict):
                 for state_key, actions_dict in data.items():
                     if not isinstance(actions_dict, dict):
                         continue
 
-                    inner: dict[int, dict[str, float]] = {}
+                    inner: Dict[int, Dict[str, float]] = {}
                     for action_str, stats in actions_dict.items():
                         try:
                             action_int = int(action_str)
@@ -151,10 +172,10 @@ class GroupAPolicy(Policy):
                     if inner:
                         table[str(state_key)] = inner
 
-            self.q_table = table
+            self.stats_table = table
         except Exception:
             # Si hay cualquier problema leyendo el archivo, seguimos sin tabla
-            self.q_table = {}
+            self.stats_table = {}
 
     def _select_with_ucb(self, key: str, legal: list[int]) -> int | None:
         """
@@ -165,8 +186,13 @@ class GroupAPolicy(Policy):
         if not state_stats:
             return None
 
-        # Total de visitas del estado (aprox): suma de N(a)
-        total_N = sum(max(1, int(s["N"])) for s in state_stats.values())
+        # Total de visitas aproximado del estado: suma de N(a)
+        total_N = 0
+        for s in state_stats.values():
+            try:
+                total_N += max(1, int(s.get("N", 0)))
+            except (TypeError, ValueError):
+                total_N += 1
         if total_N <= 0:
             return None
 
@@ -178,8 +204,15 @@ class GroupAPolicy(Policy):
             if not stats_a:
                 continue
 
-            N_sa = max(1, int(stats_a["N"]))
-            Q_sa = float(stats_a["Q"])
+            try:
+                N_sa = max(1, int(stats_a.get("N", 0)))
+            except (TypeError, ValueError):
+                N_sa = 1
+
+            try:
+                Q_sa = float(stats_a.get("Q", 0.0))
+            except (TypeError, ValueError):
+                Q_sa = 0.0
 
             # UCB1
             exploration = self.c_explore * math.sqrt(
@@ -193,7 +226,6 @@ class GroupAPolicy(Policy):
 
         return None if best_action is None else int(best_action)
 
-
     def act(self, s: np.ndarray) -> int:
         """
         Recibe el tablero como np.ndarray(6x7) con valores -1, 0, 1
@@ -206,31 +238,29 @@ class GroupAPolicy(Policy):
             # Situación anómala, pero devolvemos algo por seguridad
             return 0
 
-        # 1) Intentar ganar ya mismo
+        # Jugador al turno deducido por paridad de fichas
+        current_player = _guess_current_player(board)
+        opponent = -current_player
+
+        # 1) Intentar ganar ya mismo (para el jugador al turno)
         for c in legal:
-            newb = _drop(board, c, self.me)
-            if newb is not None and _win(newb, self.me):
+            newb = _drop(board, c, current_player)
+            if newb is not None and _win(newb, current_player):
                 return int(c)
 
         # 2) Bloquear victoria inmediata del rival
         for c in legal:
-            newb = _drop(board, c, self.opp)
-            if newb is not None and _win(newb, self.opp):
+            newb = _drop(board, c, opponent)
+            if newb is not None and _win(newb, opponent):
                 return int(c)
 
         # 3) Intentar usar policy_model.json con UCB
         if self.stats_table:
             key = _encode_state(board)
-            # OJO: estos prints puedes comentarlos si quieres menos ruido
             if key in self.stats_table:
-                # print("✓ KEY ENCONTRADA:", key)
                 action_ucb = self._select_with_ucb(key, legal)
                 if action_ucb is not None:
                     return int(action_ucb)
-            else:
-                # print("✗ KEY NO EXISTE:", key)
-                pass
-
 
         # 4) Heurística de preferencia por el centro
         for c in [3, 2, 4, 1, 5, 0, 6]:

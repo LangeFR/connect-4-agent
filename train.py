@@ -4,37 +4,35 @@ import random
 
 from connect4.connect_state import ConnectState
 from agent.agent import Connect4MCTSAgent
-from agent.agent import get_default_config, MODEL_PATH
+from agent.config import get_default_config, MODEL_PATH
 from connect4.utils import (
     find_immediate_win_action,
     find_block_action_against_immediate_win,
 )
-from connect4.encoder import encode_state
-from connect4.utils import append_game_dump
+#from evaluation.tournament.utils import append_game_dump
 
 
-OLD_MODEL_PATH = "connect4/metrics/old_policy_model.json"
+OLD_MODEL_PATH = "models/baselines/old_policy_model.json"
 
 # Modo de entrenamiento:
 # "random"   -> vs agente aleatorio
 # "self_play"-> self-play simétrico
 # "old_play" -> vs política congelada (old_policy_model.json)
-TRAIN_MODE = "old_play" 
+TRAIN_MODE = "old_play"
 
 # ¿El agente que entrena debe bloquear mates en 1?
-AGENT_ENABLE_BLOCK = True
+AGENT_ENABLE_BLOCK = False
 # ¿El oponente debe bloquear mates en 1?
 OPPONENT_ENABLE_BLOCK = True
 
 # ¿El agente que entrena debe FORZAR ganar en 1 cuando puede?
-AGENT_ENABLE_WIN_IN_1 = True
+AGENT_ENABLE_WIN_IN_1 = False
 # ¿El oponente debe FORZAR ganar en 1 cuando puede?
 OPPONENT_ENABLE_WIN_IN_1 = True
 
 # Debug: traza de movimientos por episodio
-DEBUG_TRAIN_MOVES = True       # pon True cuando quieras ver jugadas
+DEBUG_TRAIN_MOVES = False       # pon True cuando quieras ver jugadas
 DEBUG_TRAIN_MAX_EPISODES_LOG = 20  # cuántos episodios loguear como máximo
-
 
 
 def random_policy(state: ConnectState) -> int:
@@ -42,13 +40,14 @@ def random_policy(state: ConnectState) -> int:
     legal = state.get_free_cols()
     return random.choice(legal) if legal else 0
 
+
 def play_game(
     agent_new: Connect4MCTSAgent,
     mode: str,
     agent_old: Connect4MCTSAgent | None = None,
     train_as_player: int = -1,
     episode_idx: int | None = None,
-) -> tuple[int, ConnectState, list[tuple[str, int, int]]]:
+) -> tuple[int, ConnectState]:
     """
     Juega una partida completa según el modo:
 
@@ -66,20 +65,12 @@ def play_game(
           (agent_old nunca llama a improve_policy_with_mcts, así que no aprende).
 
     Devuelve:
-        winner, estado_final, episodio
-        donde episodio es una lista de (state_key, action, player)
-        para cada jugada realizada por el agente que entrena.
+        winner, estado_final
     """
     state = ConnectState()
 
-    # Traza de la partida desde el punto de vista del agente que entrena
-    episode: list[tuple[str, int, int]] = []
-
     # Traza completa de jugadas (para debug): (player, action)
     moves: list[tuple[int, int]] = []
-
-    # Traza de la partida desde el punto de vista del agente que entrena
-    episode: list[tuple[str, int, int]] = []
 
     while not state.is_final():
         if state.player == train_as_player:
@@ -102,10 +93,6 @@ def play_game(
                 else:
                     # 3) Si no hay nada urgente, mejorar política vía MCTS + Q
                     action = agent_new.improve_policy_with_mcts(state)
-
-            # Guardar transición (s,a,player) ANTES de aplicar la acción
-            state_key = encode_state(state)
-            episode.append((state_key, action, state.player))
         else:
             # --- Turno del OPONENTE ---
             win_action = None
@@ -128,15 +115,13 @@ def play_game(
                         legal = state.get_free_cols()
                         action = random.choice(legal)
                     elif mode == "old_play":
+                        if agent_old is None:
+                            raise ValueError("agent_old no puede ser None en modo 'old_play'.")
                         action = agent_old.select_action(state)
                     elif mode == "self_play":
                         action = agent_new.select_action(state)
                     else:
                         raise ValueError(f"Modo desconocido: {mode}")
-        # Guardar transición (s,a,player) ANTES de aplicar la acción
-        if state.player == train_as_player:
-            state_key = encode_state(state)
-            episode.append((state_key, action, state.player))
 
         # Para debug: registrar TODAS las jugadas
         moves.append((state.player, action))
@@ -156,8 +141,7 @@ def play_game(
             f"moves={moves_str}"
         )
 
-    return winner, state, episode
-
+    return winner, state
 
 
 def main() -> None:
@@ -176,7 +160,7 @@ def main() -> None:
         agent_old.load_policy(OLD_MODEL_PATH)
         # No llamamos jamás a improve_policy_with_mcts sobre agent_old
 
-    NUM_GAMES = 500  # ajusta según el tiempo que quieras entrenar
+    NUM_GAMES = 20  # ajusta según el tiempo que quieras entrenar
 
     # Debug: volcar estados finales de las partidas de entrenamiento
     DUMP_TRAIN_FINAL_STATES = True  # pon True cuando quieras inspeccionar
@@ -189,7 +173,7 @@ def main() -> None:
     for episode in range(1, NUM_GAMES + 1):
         train_as_player = -1 if (episode % 2 == 1) else 1
 
-        winner, final_state, episode_trace = play_game(
+        winner, final_state = play_game(
             agent_new=agent_new,
             mode=TRAIN_MODE,
             agent_old=agent_old,
@@ -205,31 +189,13 @@ def main() -> None:
         else:
             draws += 1
 
-        # === MONTE CARLO SOBRE TODA LA PARTIDA ===
-        # Recompensa final desde la perspectiva de train_as_player
-        if winner == train_as_player:
-            G = 1.0
-        elif winner == -train_as_player:
-            G = -1.0
-        else:
-            G = 0.0
-
-        # Actualizar Q(s,a) para cada jugada realizada por el agente que entrena
-        for state_key, action, player in episode_trace:
-            if player == train_as_player:
-                agent_new.update_q_with_terminal_reward(
-                    state_key=state_key,
-                    action=action,
-                    reward=G,
-                )
-
         # Dump opcional del estado final
         if episode % 5 == 0 and DUMP_TRAIN_FINAL_STATES:
             header = (
                 f"TRAIN game {episode}: "
                 f"winner={winner}, mode={TRAIN_MODE}, train_as_player={train_as_player}"
             )
-            append_game_dump(TRAIN_DUMP_PATH, header, final_state)
+            #append_game_dump(TRAIN_DUMP_PATH, header, final_state)
 
         if episode % 5 == 0:
             total = wins_train + wins_opp + draws
@@ -239,11 +205,9 @@ def main() -> None:
                 f"W_train={wins_train}  W_opp={wins_opp}  D={draws}  win_rate_train={win_rate:.3f}"
             )
 
-
     # Guardar la Q-table nueva como policy_model.json
     agent_new.save_policy(MODEL_PATH)
     print(f"Modelo actualizado guardado en {MODEL_PATH}")
-
 
 
 if __name__ == "__main__":

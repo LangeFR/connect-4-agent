@@ -6,7 +6,7 @@ from typing import Dict, Optional, Tuple
 
 from connect4.connect_state import ConnectState
 from .config import MCTSConfig
-from connect4.encoder import get_legal_actions, is_winning_move
+from connect4.utils import get_legal_actions, is_winning_move
 
 
 class MCTSNode:

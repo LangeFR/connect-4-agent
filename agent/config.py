@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 # Ruta donde se guarda/carga la política aprendida (estado -> mejor acción)
-MODEL_PATH = "connect4/agente/policy_model.json"
+MODEL_PATH = "models/current/policy_model.json"
 
 
 @dataclass
