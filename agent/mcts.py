@@ -172,9 +172,15 @@ def _default_policy_tbopi(
     eps_unknown: float = 0.4,
 ) -> float:
     """
-    Rollout TBOPI con recompensa por jugador-local:
-    Cada par (state_key, action) se actualiza con +1/-1/0 según
-    si *el jugador que hizo esa acción* ganó/perdió/empató.
+    Rollout para TBOPI con exploración explícita de acciones sin Q:
+
+    - En cada estado:
+        0) (opcional) ganar en 1 / bloquear.
+        1) Con prob. eps_unknown, si hay acciones sin Q(s,a), explora una al azar.
+        2) Si no, con prob. 1-epsilon usa Q(s,a) entre acciones conocidas (argmax Q).
+        3) Si no aplica nada de lo anterior, heurística clásica
+           (ganar en 1, bloquear, centro, random).
+    - Al final, se actualiza Q(s,a) para toda la trayectoria con la recompensa terminal.
     """
     current = state
     depth = 0
@@ -186,56 +192,61 @@ def _default_policy_tbopi(
             break
 
         state_key = agent._get_state_key(current)
-        q_actions = agent._get_q_for_state(state_key)
 
-        known_actions = {a: stats for a, stats in q_actions.items() if a in legal_actions}
-        unknown_actions = [a for a in legal_actions if a not in known_actions]
+        q_actions = agent._get_q_for_state(state_key)  # {a: (N, Q)}
+        known_actions = {
+            a: stats for a, stats in q_actions.items() if a in legal_actions
+        }
+        unknown_actions = [a for a in legal_actions if a not in q_actions]
 
         chosen_action = None
 
+        # ganar en 1 / bloquear 
         player = current.player
         opponent = -player
 
-        # 1) Ganar en 1
+        # ganar en 1
         for a in legal_actions:
             if is_winning_move(current, a, player):
                 chosen_action = a
                 break
 
-        # 2) Bloquear
+        # bloquear en 1
         if chosen_action is None:
             for a in legal_actions:
                 if is_winning_move(current, a, opponent):
                     chosen_action = a
                     break
 
-        # 3) Explorar acciones sin Q
-        if (
-            chosen_action is None 
-            and unknown_actions 
-            and random.random() < eps_unknown
-        ):
+        # 1) Explorar acciones sin Q(s,a)
+        if chosen_action is None and unknown_actions and random.random() < eps_unknown:
             chosen_action = random.choice(unknown_actions)
 
-        # 4) Exploitar Q (epsilon-greedy)
-        if (
+        # 2) Usar Q(s,a) entre acciones conocidas (epsilon-greedy)
+        use_q = (
             chosen_action is None
-            and known_actions
-            and random.random() > epsilon
-        ):
-            def q_value_of(a):
-                return known_actions[a][1]  # Q
+            and bool(known_actions)
+            and (random.random() > epsilon)
+        )
+
+        if use_q and chosen_action is None:
+            # stats = (N, Q_val)
+            def q_value_of(action: int) -> float:
+                N, Q_val = known_actions[action]
+                return Q_val
+
             chosen_action = max(known_actions.keys(), key=q_value_of)
 
-        # 5) Heurística
+        # 3) Heurística clásica como fallback
         if chosen_action is None:
-            center_order = [3,2,4,1,5,0,6]
+            # Preferir columnas centrales
+            center_order = [3, 2, 4, 1, 5, 0, 6]
             for c in center_order:
                 if c in legal_actions:
                     chosen_action = c
                     break
 
-        # 6) Random fallback
+        # 4) Fallback: aleatorio
         if chosen_action is None:
             chosen_action = random.choice(legal_actions)
 
@@ -254,13 +265,25 @@ def _default_policy_tbopi(
             r = -1.0
         agent.update_q_with_terminal_reward(state_key, action, r)
         
+
+    for state_key, action, actor in trajectory:
+        if winner == actor:
+            r = 1.0
+        elif winner == 0:
+            r = 0.0
+        else:
+            r = -1.0
+        agent.update_q_with_terminal_reward(state_key, action, r)
+        
     if winner == root_player:
-        reward_root = 1.0
+        reward_root_root = 1.0
     elif winner == 0:
-        reward_root = 0.0
+        reward_root_root = 0.0
     else:
         reward_root = -1.0
+        reward_root = -1.0
 
+    return reward_root
     return reward_root
 
 
