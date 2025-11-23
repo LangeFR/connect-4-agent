@@ -1,12 +1,12 @@
 import os
 import json
+import math
 import numpy as np
 from connect4.policy import Policy
-#from connect4.agente.encoder import encode_state
 
 ROWS = 6
 COLS = 7
-MODEL_PATH = "policy_model.json"
+MODEL_PATH = "connect4/policy_model.json"
 
 
 def _legal_actions(board: np.ndarray):
@@ -87,38 +87,43 @@ class GroupAPolicy(Policy):
     """
     Política final:
     - Juega como jugador -1.
-    - mount(): carga policy_model.json si existe.
+    - mount(time_out): carga policy_model.json si existe.
     - act(s): recibe un np.ndarray (6x7) y devuelve una columna (0..6).
+
     Prioridad de decisión:
       1) Ganar en una jugada si es posible.
       2) Bloquear victoria inmediata del rival.
-      3) Usar policy_model.json si hay acción aprendida y es legal.
+      3) Usar policy_model.json con UCB sobre (N,Q) si hay entrada.
       4) Heurística fija: preferencia por el centro (3,2,4,1,5,0,6).
     """
 
     def __init__(self) -> None:
         self.me = -1
         self.opp = 1
-        # Q-table: state_key -> {action -> Q_value}
-        self.q_table: dict[str, dict[int, float]] = {}
-        # Timeout por jugada
+        # stats_table: state_key -> { action_int -> {"N": int, "Q": float} }
+        self.stats_table: dict[str, dict[int, dict[str, float]]] = {}
+        # Constante de exploración UCB
+        self.c_explore: float = 1.4
+        # Timeout por jugada (lo setea Gradescope en mount)
         self.time_out: int = 10
-
 
     def mount(self, time_out: float | None = None) -> None:
         """
         Inicialización "pesada": cargar el modelo de política si existe.
-        Si algo falla, simplemente no se usa policy_table.
+        El autograder llamará a mount(time_out), donde time_out es el
+        máximo de segundos permitidos por jugada.
         """
+        self.time_out = time_out
+
         if not os.path.exists(MODEL_PATH):
+            self.stats_table = {}
             return
 
         try:
             with open(MODEL_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            # Ahora esperamos: state_key -> { action_str -> {"N": ..., "Q": ...} }
-            table: dict[str, dict[int, float]] = {}
+            table: dict[str, dict[int, dict[str, float]]] = {}
 
             if isinstance(data, dict):
                 for state_key, actions_dict in data.items():
@@ -151,10 +156,10 @@ class GroupAPolicy(Policy):
                     if inner:
                         table[str(state_key)] = inner
 
-            self.q_table = table
+            self.stats_table = table
         except Exception:
             # Si hay cualquier problema leyendo el archivo, seguimos sin tabla
-            self.q_table = {}
+            self.stats_table = {}
 
     def _select_with_ucb(self, key: str, legal: list[int]) -> int | None:
         """
@@ -193,7 +198,6 @@ class GroupAPolicy(Policy):
 
         return None if best_action is None else int(best_action)
 
-
     def act(self, s: np.ndarray) -> int:
         """
         Recibe el tablero como np.ndarray(6x7) con valores -1, 0, 1
@@ -230,7 +234,6 @@ class GroupAPolicy(Policy):
             else:
                 # print("✗ KEY NO EXISTE:", key)
                 pass
-
 
         # 4) Heurística de preferencia por el centro
         for c in [3, 2, 4, 1, 5, 0, 6]:
