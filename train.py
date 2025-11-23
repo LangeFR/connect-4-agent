@@ -1,6 +1,8 @@
 # train.py
 
 import random
+import os
+import yaml  # Cargar configuración desde train.yml
 
 from connect4.connect_state import ConnectState
 from agent.agent import Connect4MCTSAgent
@@ -12,27 +14,52 @@ from connect4.utils import (
 #from evaluation.tournament.utils import append_game_dump
 
 
-OLD_MODEL_PATH = "models/baselines/old_policy_model.json"
+# ---------------------------------------------------------------------
+# Carga de configuración desde config/train.yml
+# ---------------------------------------------------------------------
+
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config", "train.yaml")
+
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    TRAIN_CONFIG = yaml.safe_load(f) or {}
+
+# Rutas
+OLD_MODEL_PATH = TRAIN_CONFIG.get(
+    "paths", {}
+).get("baseline_model_path", "models/baselines/old_policy_model.json")
 
 # Modo de entrenamiento:
 # "random"   -> vs agente aleatorio
 # "self_play"-> self-play simétrico
 # "old_play" -> vs política congelada (old_policy_model.json)
-TRAIN_MODE = "old_play"
+TRAIN_MODE = TRAIN_CONFIG.get("train", {}).get("mode", "old_play")
 
 # ¿El agente que entrena debe bloquear mates en 1?
-AGENT_ENABLE_BLOCK = False
+AGENT_ENABLE_BLOCK = TRAIN_CONFIG.get("agent_rules", {}).get("agent_enable_block", False)
 # ¿El oponente debe bloquear mates en 1?
-OPPONENT_ENABLE_BLOCK = True
+OPPONENT_ENABLE_BLOCK = TRAIN_CONFIG.get("agent_rules", {}).get("opponent_enable_block", True)
 
 # ¿El agente que entrena debe FORZAR ganar en 1 cuando puede?
-AGENT_ENABLE_WIN_IN_1 = False
-# ¿El oponente debe FORZAR ganar en 1 cuando puede?
-OPPONENT_ENABLE_WIN_IN_1 = True
+AGENT_ENABLE_WIN_IN_1 = TRAIN_CONFIG.get("agent_rules", {}).get("agent_enable_win_in_1", False)
+# ¿El oponente debe FORZAR ganar en 1 cuando puede?C
+OPPONENT_ENABLE_WIN_IN_1 = TRAIN_CONFIG.get("agent_rules", {}).get("opponent_enable_win_in_1", True)
 
 # Debug: traza de movimientos por episodio
-DEBUG_TRAIN_MOVES = False       # pon True cuando quieras ver jugadas
-DEBUG_TRAIN_MAX_EPISODES_LOG = 20  # cuántos episodios loguear como máximo
+DEBUG_TRAIN_MOVES = TRAIN_CONFIG.get("logging", {}).get("debug_train_moves", False)       # pon True cuando quieras ver jugadas
+DEBUG_TRAIN_MAX_EPISODES_LOG = TRAIN_CONFIG.get("logging", {}).get(
+    "debug_train_max_episodes_log", 20
+)  # cuántos episodios loguear como máximo
+
+# Número de partidas de entrenamiento
+TRAIN_NUM_GAMES = TRAIN_CONFIG.get("train", {}).get("num_games", 200)
+
+# Config de dumps
+DUMP_TRAIN_FINAL_STATES_DEFAULT = TRAIN_CONFIG.get("logging", {}).get(
+    "dump_train_final_states", True
+)
+TRAIN_DUMP_PATH_DEFAULT = TRAIN_CONFIG.get("paths", {}).get(
+    "train_dump_path", "debug/train_final_states.txt"
+)
 
 
 def random_policy(state: ConnectState) -> int:
@@ -160,11 +187,11 @@ def main() -> None:
         agent_old.load_policy(OLD_MODEL_PATH)
         # No llamamos jamás a improve_policy_with_mcts sobre agent_old
 
-    NUM_GAMES = 20  # ajusta según el tiempo que quieras entrenar
+    NUM_GAMES = TRAIN_NUM_GAMES  # ajusta según el tiempo que quieras entrenar
 
     # Debug: volcar estados finales de las partidas de entrenamiento
-    DUMP_TRAIN_FINAL_STATES = True  # pon True cuando quieras inspeccionar
-    TRAIN_DUMP_PATH = "debug/train_final_states.txt"
+    DUMP_TRAIN_FINAL_STATES = DUMP_TRAIN_FINAL_STATES_DEFAULT  # pon True cuando quieras inspeccionar
+    TRAIN_DUMP_PATH = TRAIN_DUMP_PATH_DEFAULT
 
     wins_train = 0
     wins_opp = 0
@@ -190,14 +217,14 @@ def main() -> None:
             draws += 1
 
         # Dump opcional del estado final
-        if episode % 5 == 0 and DUMP_TRAIN_FINAL_STATES:
+        if episode % 10 == 0 and DUMP_TRAIN_FINAL_STATES:
             header = (
                 f"TRAIN game {episode}: "
                 f"winner={winner}, mode={TRAIN_MODE}, train_as_player={train_as_player}"
             )
-            #append_game_dump(TRAIN_DUMP_PATH, header, final_state)
+            # append_game_dump(TRAIN_DUMP_PATH, header, final_state)
 
-        if episode % 5 == 0:
+        if episode % 20 == 0:
             total = wins_train + wins_opp + draws
             win_rate = wins_train / total if total > 0 else 0.0
             print(
