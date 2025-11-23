@@ -2,9 +2,13 @@
 
 import json
 import os
+import math
+import random
 from typing import Dict, Optional, Tuple
 
 from connect4.connect_state import ConnectState
+from connect4.agente.encoder import encode_state
+
 from .config import MCTSConfig, get_default_config, MODEL_PATH
 from .encoder import (
     encode_state,
@@ -44,6 +48,11 @@ class Connect4MCTSAgent:
         self.config: MCTSConfig = config or get_default_config()
         self.q_table: QTable = q_table or {}
         self._dirty: bool = False  # si se modificó la Q-table en esta sesión
+
+        # Parámetro de exploración para softmax:
+        #   - Valores más altos => más exploración (acciones subóptimas tienen más probabilidad).
+        #   - Valores bajos (~0.1–0.5) => comportamiento casi-greedy.
+        self.softmax_temperature: float = 0.5
 
     # ---------------------------------------------------------------------
     # Helpers internos sobre Q-table
@@ -165,11 +174,80 @@ class Connect4MCTSAgent:
     # Lógica principal de juego (inferencia)
     # ---------------------------------------------------------------------
 
+    def _select_action_from_q_softmax(
+        self,
+        state_key: str,
+        legal_actions: list[int],
+        temperature: float = 0.3,
+    ) -> int | None:
+        """
+        Elige una acción entre las legales usando SOFTMAX sobre Q(s,a).
+        - Si no hay Q para este estado, devuelve None.
+        - Si temperature -> 0, se parece a una política greedy.
+        """
+
+        q_dict = self._get_q_for_state(state_key)  # {a: (N, Q)} o {a: Q}
+        if not q_dict:
+            return None
+
+        actions: list[int] = []
+        q_values: list[float] = []
+
+        for a in legal_actions:
+            stats = q_dict.get(a)
+            if stats is None:
+                # Nunca hemos visto esta acción en este estado
+                continue
+
+            # Tus debug prints muestran algo tipo: {4: (N, Q), ...}
+            if isinstance(stats, (tuple, list)) and len(stats) >= 2:
+                _, q_val = stats
+            else:
+                q_val = float(stats)
+
+            actions.append(a)
+            q_values.append(q_val)
+
+        if not actions:
+            # No hay ninguna acción legal con Q conocido
+            return None
+
+        # Si la temperatura es muy baja, hacemos casi-greedy
+        if temperature <= 1e-6:
+            best_idx = max(range(len(actions)), key=lambda i: q_values[i])
+            return actions[best_idx]
+
+        # --- Softmax(Q / T) ---
+        # 1) Escalar por temperatura
+        scaled = [q / temperature for q in q_values]
+        # 2) Estabilizar restando el máximo
+        m = max(scaled)
+        exps = [math.exp(s - m) for s in scaled]
+        Z = sum(exps)
+        # 3) Probabilidades
+        probs = [e / Z for e in exps]
+
+        # 4) Muestreo según esas probabilidades
+        r = random.random()
+        acc = 0.0
+        for a, p in zip(actions, probs):
+            acc += p
+            if r <= acc:
+                return a
+
+        # Fallback por temas numéricos
+        return actions[-1]
+
+
+
     def select_action(self, state: ConnectState) -> int:
         """
         Inferencia:
-        - Intenta usar Q(s,a) tabular (acción greedy).
-        - Si no hay datos suficientes, usa MCTS online como fallback.
+        - Primero: forzar ganar en 1 si se puede.
+        - Luego: bloquear victoria inmediata del rival.
+        - Después: usar Q(s,a) con SOFTMAX sobre los valores Q (exploración
+          basada en probabilidad de victoria).
+        - Si no hay datos Q suficientes, usar MCTS online como fallback.
         """
         state_key = self._get_state_key(state)
         legal_actions = get_legal_actions(state)
@@ -189,29 +267,27 @@ class Connect4MCTSAgent:
         block_action = find_block_action_against_immediate_win(state)
         if block_action is not None:
             if DEBUG_AGENT_SELECT:
-                print(f"[DEBUG select_action][BLOCK_IN_1] player={state.player}, action={block_action}")
+                print(
+                    f"[DEBUG select_action][BLOCK_IN_1] player={state.player}, "
+                    f"action={block_action}"
+                )
             return block_action
 
-        # 3) Intentar acción greedy usando Q(s,a)
-        action = self._select_action_from_q(state, state_key)
-        if action is not None and action in legal_actions:
-            if DEBUG_AGENT_SELECT:
-                q_actions = self._get_q_for_state(state_key)
-                print(
-                    f"[DEBUG select_action][Q] player={state.player}, "
-                    f"state_key={state_key[:20]}..., "
-                    f"legal={legal_actions}, "
-                    f"q_actions={q_actions}, "
-                    f"chosen={action}"
-                )
-            return action
+        # 3) Intentar acción usando Q(s,a) con SOFTMAX (exploración por prob. de victoria)
+        #    Aquí puedes ajustar la temperatura según lo "explorador" que quieras ser.
+        temperature_eval = 0.3  # prueba con 0.3, 0.5, etc.
+        action = self._select_action_from_q_softmax(
+            state_key=state_key,
+            legal_actions=legal_actions,
+            temperature=temperature_eval,
+        )
 
 
         # 4) Fallback: MCTS online
         if DEBUG_AGENT_SELECT:
             print(
                 f"[DEBUG select_action][MCTS] player={state.player}, "
-                f"state_key={state_key[:20]}..., sin Q, llamando MCTS"
+                f"state_key={state_key[:20]}..., sin Q o sin acciones, llamando MCTS"
             )
         best_action, _root_stats = run_mcts_for_state(
             state=state,
@@ -224,7 +300,8 @@ class Connect4MCTSAgent:
             if DEBUG_AGENT_SELECT:
                 print(
                     f"[DEBUG select_action][MCTS_DONE] player={state.player}, "
-                    f"best_action={best_action}"
+                    f"best_action_invalida={best_action}, "
+                    f"legal={legal_actions}"
                 )
             best_action = legal_actions[0]
 
@@ -251,19 +328,16 @@ class Connect4MCTSAgent:
             state=state,
             root_player=state.player,
             config=self.config,
+            agent=self,  # <- activamos TBOPI en simulaciones
         )
 
         # Actualizar Q-table con root_stats de MCTS
         self._update_q_from_root_stats(state_key, root_stats)
 
-        # Elegir acción a jugar: greedy según Q(s,a) tras la actualización,
-        # con fallback al best_action de MCTS si no hubiera Q suficiente.
+        # Elegir acción final (greedy sobre Q, con fallback a best_action)
         action = self._select_action_from_q(state, state_key)
-        if action is None:
-            action = best_action
-
-        if action not in legal_actions:
-            action = legal_actions[0]
+        if action is None or action not in legal_actions:
+            action = best_action if best_action in legal_actions else legal_actions[0]
 
         return action
 
@@ -354,3 +428,97 @@ class Connect4MCTSAgent:
             json.dump(serializable, f, ensure_ascii=False)
 
         self._dirty = False
+
+# ---------------------------------------------------------------------
+# Método softmax para selección de acción   
+# ---------------------------------------------------------------------
+
+    def _softmax_action_from_q(
+        self,
+        state: ConnectState,
+        temperature: float | None = None,
+    ) -> int:
+        """
+        Elige una acción usando softmax sobre los Q(s,a) almacenados en self.q_table.
+
+        Lógica:
+        1. Obtenemos las acciones legales.
+        2. Buscamos en la Q-table los valores Q(s,a) de ese estado.
+        3. Si NO hay información para ese estado, hacemos fallback a MCTS:
+           -> usamos improve_policy_with_mcts(state).
+        4. Si SÍ hay Q(s,a), calculamos una distribución de probabilidad:
+           p(a) ∝ exp( Q(s,a) / temperature )
+        5. Muestreamos una acción según esas probabilidades.
+
+        Esto introduce exploración más "inteligente" que ε-greedy, porque:
+        - Acciones con Q alto tienen más probabilidad.
+        - Acciones con Q bajo tienen menos, pero siguen explorándose.
+        """
+
+        # 1) Obtener acciones legales
+        legal = state.get_free_cols()
+        if not legal:
+            # Algo raro, pero devolvemos 0 por seguridad.
+            return 0
+
+        # Temperatura efectiva
+        tau = self.softmax_temperature if temperature is None else temperature
+
+        # 2) Q(s,a) para este estado
+        state_key = encode_state(state)
+        actions_dict = self.q_table.get(state_key)
+
+        # Si todavía no hemos visto este estado en la Q-table,
+        # usamos MCTS como fallback (exploración "fuerte").
+        if not actions_dict:
+            return self.improve_policy_with_mcts(state)
+
+        # 3) Construimos la lista de Q-values para las acciones LEGALES.
+        qs: list[float] = []
+        for a in legal:
+            stats = actions_dict.get(a)
+
+            # stats puede ser:
+            # - dict {"N": ..., "Q": ...}
+            # - o, según versiones anteriores, una tupla (N, Q)
+            if stats is None:
+                q_val = 0.0
+            elif isinstance(stats, dict):
+                q_val = float(stats.get("Q", 0.0))
+            else:
+                # fallback por si stats es (N, Q)
+                try:
+                    q_val = float(stats[1])
+                except Exception:
+                    q_val = 0.0
+
+            qs.append(q_val)
+
+        # 4) Softmax numéricamente estable
+        max_q = max(qs)
+
+        # Si tau <= 0, interpretamos como "greedy puro"
+        if tau is None or tau <= 0.0:
+            best_idx = max(range(len(qs)), key=lambda i: qs[i])
+            return int(legal[best_idx])
+
+        # exp((Q - maxQ)/tau) para estabilidad numérica
+        exp_qs = [math.exp((q - max_q) / tau) for q in qs]
+        sum_exp = sum(exp_qs)
+
+        if sum_exp <= 0.0:
+            # Por si hay algún problema numérico extremo
+            return random.choice(legal)
+
+        probs = [e / sum_exp for e in exp_qs]
+
+        # 5) Muestreo categórico según probs
+        r = random.random()
+        cumulative = 0.0
+        for a, p in zip(legal, probs):
+            cumulative += p
+            if r <= cumulative:
+                return int(a)
+
+        # Por si el acumulado se queda un pelín corto por redondeo
+        return int(legal[-1])
