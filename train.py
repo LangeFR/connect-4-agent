@@ -22,12 +22,12 @@ OLD_MODEL_PATH = "connect4/metrics/old_policy_model.json"
 TRAIN_MODE = "old_play" 
 
 # ¿El agente que entrena debe bloquear mates en 1?
-AGENT_ENABLE_BLOCK = False
+AGENT_ENABLE_BLOCK = True
 # ¿El oponente debe bloquear mates en 1?
 OPPONENT_ENABLE_BLOCK = True
 
 # ¿El agente que entrena debe FORZAR ganar en 1 cuando puede?
-AGENT_ENABLE_WIN_IN_1 = False
+AGENT_ENABLE_WIN_IN_1 = True
 # ¿El oponente debe FORZAR ganar en 1 cuando puede?
 OPPONENT_ENABLE_WIN_IN_1 = True
 
@@ -176,7 +176,7 @@ def main() -> None:
         agent_old.load_policy(OLD_MODEL_PATH)
         # No llamamos jamás a improve_policy_with_mcts sobre agent_old
 
-    NUM_GAMES = 4  # ajusta según el tiempo que quieras entrenar
+    NUM_GAMES = 500  # ajusta según el tiempo que quieras entrenar
 
     # Debug: volcar estados finales de las partidas de entrenamiento
     DUMP_TRAIN_FINAL_STATES = True  # pon True cuando quieras inspeccionar

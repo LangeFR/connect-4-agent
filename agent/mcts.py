@@ -163,6 +163,104 @@ def _default_policy(
     else:
         return -1.0
 
+def _default_policy_tbopi(
+    state: ConnectState,
+    root_player: int,
+    max_depth_remaining: int,
+    agent,
+    epsilon: float = 0.2,
+) -> float:
+    """
+    Rollout para TBOPI: usa Q(s,a) tabular del agent + heurística como fallback.
+
+    - En cada estado del rollout:
+        - Si hay Q(s,a) para ese estado y alguna acción legal, se hace
+          epsilon-greedy sobre Q.
+        - Si no hay información, se usa la misma heurística que en _default_policy
+          (ganar en 1, bloquear, columna central, random).
+    - Al final, se actualiza Q(s,a) para toda la trayectoria con la recompensa
+      terminal (Monte Carlo).
+    """
+    current = state
+    depth = 0
+    trajectory = []  # lista de (state_key, action) visitados en el rollout
+
+    while not current.is_final() and depth < max_depth_remaining:
+        legal_actions = get_legal_actions(current)
+        if not legal_actions:
+            break
+
+        # Clave de estado para la Q-table del agente
+        state_key = agent._get_state_key(current)
+
+        chosen_action = None
+
+        # Intentar usar Q(s,a) si hay información
+        q_actions = agent._get_q_for_state(state_key)
+        # Filtramos solo acciones legales
+        q_legal = {a: stats for a, stats in q_actions.items() if a in legal_actions}
+
+        use_q = bool(q_legal) and (random.random() > epsilon)
+
+        if use_q:
+            # stats = (N, Q_val). Usamos Q_val para explotar.
+            def q_value_of(action: int) -> float:
+                N, Q_val = q_legal[action]
+                return Q_val
+
+            chosen_action = max(q_legal.keys(), key=q_value_of)
+
+        if chosen_action is None:
+            # Fallback: heurística igual a _default_policy
+            player = current.player
+            opponent = -player
+
+            # 1) Intentar ganar en 1 jugada
+            for a in legal_actions:
+                if is_winning_move(current, a, player):
+                    chosen_action = a
+                    break
+
+            # 2) Intentar bloquear victoria inmediata del rival
+            if chosen_action is None:
+                for a in legal_actions:
+                    if is_winning_move(current, a, opponent):
+                        chosen_action = a
+                        break
+
+            # 3) Heurística: preferir columnas centrales
+            if chosen_action is None:
+                center_order = [3, 2, 4, 1, 5, 0, 6]
+                for c in center_order:
+                    if c in legal_actions:
+                        chosen_action = c
+                        break
+
+            # 4) Fallback: aleatorio
+            if chosen_action is None:
+                chosen_action = random.choice(legal_actions)
+
+        # Guardar en la trayectoria para actualizar Q al final
+        trajectory.append((state_key, chosen_action))
+
+        # Avanzar al siguiente estado
+        current = current.transition(chosen_action)
+        depth += 1
+
+    # Recompensa terminal desde el punto de vista del root_player
+    winner = current.get_winner()
+    if winner == root_player:
+        reward = 1.0
+    elif winner == 0:
+        reward = 0.0
+    else:
+        reward = -1.0
+
+    # Actualizar Q(s,a) para TODA la trayectoria (Monte Carlo)
+    for state_key, action in trajectory:
+        agent.update_q_with_terminal_reward(state_key, action, reward)
+
+    return reward
 
 
 def _backup(node: MCTSNode, reward: float) -> None:
@@ -181,11 +279,15 @@ def run_mcts_for_state(
     state: ConnectState,
     root_player: int,
     config: MCTSConfig,
+    agent=None,
 ) -> Tuple[int, Dict[int, Tuple[int, float]]]:
     """
     Ejecuta MCTS desde el estado dado y devuelve:
     - la mejor acción (columna)
     - un diccionario con estadísticas en la raíz: acción -> (N, Q)
+
+    Si agent is not None, la fase de simulación usa TBOPI con Q(s,a),
+    actualizando la Q-table del agente en cada rollout.
     """
     root = MCTSNode(state=state, parent=None, action_from_parent=None)
 
@@ -194,11 +296,20 @@ def run_mcts_for_state(
         leaf, depth = _tree_policy(root, config)
 
         # Simulación
-        reward = _default_policy(
-            leaf.state,
-            root_player=root_player,
-            max_depth_remaining=config.max_depth - depth,
-        )
+        max_depth_remaining = config.max_depth - depth
+        if agent is not None:
+            reward = _default_policy_tbopi(
+                leaf.state,
+                root_player=root_player,
+                max_depth_remaining=max_depth_remaining,
+                agent=agent,
+            )
+        else:
+            reward = _default_policy(
+                leaf.state,
+                root_player=root_player,
+                max_depth_remaining=max_depth_remaining,
+            )
 
         # Backpropagation
         _backup(leaf, reward)
