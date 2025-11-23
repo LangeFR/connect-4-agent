@@ -2,14 +2,12 @@ import os
 import json
 import math
 from typing import Dict
-
 import numpy as np
 from connect4.policy import Policy
 
 # Dimensiones fijas del tablero de Connect4
 ROWS = 6
 COLS = 7
-
 # Ruta del modelo entrenado, consistente con agent/config.py
 MODEL_PATH = "models/current/policy_model.json"
 
@@ -97,39 +95,36 @@ def _encode_state(board: np.ndarray) -> str:
 
 class GroupAPolicy(Policy):
     """
-    Política que consume la Q-table entrenada por tu agente (policy_model.json).
+    Política final:
+    - Juega como jugador -1.
+    - mount(time_out): carga policy_model.json si existe.
+    - act(s): recibe un np.ndarray (6x7) y devuelve una columna (0..6).
 
     Prioridad de decisión:
       1) Ganar en una jugada si es posible (para el jugador al turno).
       2) Bloquear victoria inmediata del rival.
-      3) Usar policy_model.json con UCB sobre (N, Q) si hay datos.
+      3) Usar policy_model.json con UCB sobre (N,Q) si hay entrada.
       4) Heurística fija: preferencia por el centro (3,2,4,1,5,0,6).
       5) Fallback: primera columna legal.
     """
 
     def __init__(self) -> None:
-        # stats_table: state_key -> { action -> {"N": int, "Q": float} }
-        self.stats_table: Dict[str, Dict[int, Dict[str, float]]] = {}
-        # Parámetro de exploración para UCB (alineado con MCTSConfig.c_explore)
-        self.c_explore: float = 2.5
-        # Timeout por jugada (lo exige la interfaz, aunque aquí no se use)
-        self.time_out: float = 10.0
+        self.me = -1
+        self.opp = 1
+        # stats_table: state_key -> { action_int -> {"N": int, "Q": float} }
+        self.stats_table: dict[str, dict[int, dict[str, float]]] = {}
+        # Constante de exploración UCB
+        self.c_explore: float = 1.4
+        # Timeout por jugada (lo setea Gradescope en mount)
+        self.time_out: int = 10
 
     def mount(self, time_out: float | None = None) -> None:
         """
         Inicialización "pesada": cargar el modelo de política si existe.
-
-        Lee models/current/policy_model.json con formato:
-        {
-          "state_key": {
-            "0": {"N": 10, "Q": 0.3},
-            "3": {"N": 15, "Q": 0.8}
-          },
-          ...
-        }
+        El autograder llamará a mount(time_out), donde time_out es el
+        máximo de segundos permitidos por jugada.
         """
-        if time_out is not None:
-            self.time_out = float(time_out)
+        self.time_out = time_out
 
         if not os.path.exists(MODEL_PATH):
             self.stats_table = {}
@@ -139,7 +134,7 @@ class GroupAPolicy(Policy):
             with open(MODEL_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            table: Dict[str, Dict[int, Dict[str, float]]] = {}
+            table: dict[str, dict[int, dict[str, float]]] = {}
 
             if isinstance(data, dict):
                 for state_key, actions_dict in data.items():
@@ -177,55 +172,6 @@ class GroupAPolicy(Policy):
             # Si hay cualquier problema leyendo el archivo, seguimos sin tabla
             self.stats_table = {}
 
-    def _select_with_ucb(self, key: str, legal: list[int]) -> int | None:
-        """
-        Selecciona una acción usando UCB sobre la tabla (N,Q) de policy_model.json
-        para el estado 'key'. Devuelve None si no hay datos útiles.
-        """
-        state_stats = self.stats_table.get(key)
-        if not state_stats:
-            return None
-
-        # Total de visitas aproximado del estado: suma de N(a)
-        total_N = 0
-        for s in state_stats.values():
-            try:
-                total_N += max(1, int(s.get("N", 0)))
-            except (TypeError, ValueError):
-                total_N += 1
-        if total_N <= 0:
-            return None
-
-        best_action = None
-        best_score = -float("inf")
-
-        for a in legal:
-            stats_a = state_stats.get(a)
-            if not stats_a:
-                continue
-
-            try:
-                N_sa = max(1, int(stats_a.get("N", 0)))
-            except (TypeError, ValueError):
-                N_sa = 1
-
-            try:
-                Q_sa = float(stats_a.get("Q", 0.0))
-            except (TypeError, ValueError):
-                Q_sa = 0.0
-
-            # UCB1
-            exploration = self.c_explore * math.sqrt(
-                math.log(total_N + 1.0) / N_sa
-            )
-            score = Q_sa + exploration
-
-            if score > best_score:
-                best_score = score
-                best_action = a
-
-        return None if best_action is None else int(best_action)
-
     def act(self, s: np.ndarray) -> int:
         """
         Recibe el tablero como np.ndarray(6x7) con valores -1, 0, 1
@@ -254,13 +200,23 @@ class GroupAPolicy(Policy):
             if newb is not None and _win(newb, opponent):
                 return int(c)
 
-        # 3) Intentar usar policy_model.json con UCB
+        # 3) Intentar usar policy_model.json (acción greedy sobre Q)
         if self.stats_table:
             key = _encode_state(board)
-            if key in self.stats_table:
-                action_ucb = self._select_with_ucb(key, legal)
-                if action_ucb is not None:
-                    return int(action_ucb)
+            state_stats = self.stats_table.get(key)
+            if state_stats:
+                best_action = None
+                best_q = -float("inf")
+                for a in legal:
+                    stats_a = state_stats.get(a)
+                    if not stats_a:
+                        continue
+                    q_val = float(stats_a.get("Q", 0.0))
+                    if q_val > best_q:
+                        best_q = q_val
+                        best_action = a
+                if best_action is not None:
+                    return int(best_action)
 
         # 4) Heurística de preferencia por el centro
         for c in [3, 2, 4, 1, 5, 0, 6]:
