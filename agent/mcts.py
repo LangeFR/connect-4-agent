@@ -274,15 +274,27 @@ def _default_policy_tbopi(
     return reward
 
 
-def _backup(node: MCTSNode, reward: float) -> None:
+def _backup(node: MCTSNode, reward_root: float, root_player: int) -> None:
     """
-    Fase de retropropagación: actualiza n_visits y total_value
-    a lo largo del camino desde la hoja hasta la raíz.
+    Retropropaga la recompensa pero vista desde el jugador de cada nodo:
+      - Si en el nodo juega root_player, suma +reward_root.
+      - Si en el nodo juega el rival, suma -reward_root.
+    Así, total_value en cada nodo refleja "qué tan bueno es este nodo
+    para el jugador que está al turno en ese estado".
     """
     current: Optional[MCTSNode] = node
     while current is not None:
         current.n_visits += 1
-        current.total_value += reward
+
+        if current.state.player == root_player:
+            # Desde la perspectiva del jugador de este nodo, reward_root
+            # es tal cual (él es root_player).
+            current.total_value += reward_root
+        else:
+            # En este nodo juega el rival de root_player:
+            # lo que es bueno para root es malo para él.
+            current.total_value -= reward_root
+
         current = current.parent
 
 
@@ -323,7 +335,7 @@ def run_mcts_for_state(
             )
 
         # Backpropagation
-        _backup(leaf, reward)
+        _backup(leaf, reward, root_player=root_player)
 
     # Elegir acción final en la raíz según visitas
     if not root.children:
