@@ -254,6 +254,7 @@ def _default_policy_tbopi(
         current = current.transition(chosen_action)
         depth += 1
 
+    # Ganador final de la partida
     winner = current.get_winner()
 
     for state_key, action, actor in trajectory:
@@ -265,26 +266,15 @@ def _default_policy_tbopi(
             r = -1.0
         agent.update_q_with_terminal_reward(state_key, action, r)
         
-
-    for state_key, action, actor in trajectory:
-        if winner == actor:
-            r = 1.0
-        elif winner == 0:
-            r = 0.0
-        else:
-            r = -1.0
-        agent.update_q_with_terminal_reward(state_key, action, r)
-        
     if winner == root_player:
-        reward_root_root = 1.0
+        reward_root = 1.0
     elif winner == 0:
-        reward_root_root = 0.0
+        reward_root = 0.0
     else:
         reward_root = -1.0
-        reward_root = -1.0
 
     return reward_root
-    return reward_root
+
 
 
 def _backup(node: MCTSNode, reward_root: float, root_player: int) -> None:
