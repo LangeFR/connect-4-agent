@@ -1,0 +1,58 @@
+=== Entrenamiento de Q(s,a) + MCTS para Connect4 (modo=self_play) ===
+[20/200] W_train=7  W_opp=13  D=0  win_rate_train=0.350
+[40/200] W_train=20  W_opp=19  D=1  win_rate_train=0.500
+[60/200] W_train=31  W_opp=26  D=3  win_rate_train=0.517
+[80/200] W_train=42  W_opp=33  D=5  win_rate_train=0.525
+[100/200] W_train=55  W_opp=40  D=5  win_rate_train=0.550
+[120/200] W_train=65  W_opp=48  D=7  win_rate_train=0.542
+[140/200] W_train=76  W_opp=57  D=7  win_rate_train=0.543
+[160/200] W_train=89  W_opp=64  D=7  win_rate_train=0.556
+[180/200] W_train=100  W_opp=72  D=8  win_rate_train=0.556
+
+
+=== Entrenamiento de Q(s,a) + MCTS para Connect4 (modo=self_play) ===
+[20/200] W_train=15  W_opp=3  D=2  win_rate_train=0.750
+[40/200] W_train=29  W_opp=9  D=2  win_rate_train=0.725
+[60/200] W_train=40  W_opp=18  D=2  win_rate_train=0.667
+[80/200] W_train=51  W_opp=27  D=2  win_rate_train=0.637
+[100/200] W_train=64  W_opp=34  D=2  win_rate_train=0.640
+[120/200] W_train=77  W_opp=39  D=4  win_rate_train=0.642
+[140/200] W_train=91  W_opp=45  D=4  win_rate_train=0.650
+[160/200] W_train=105  W_opp=50  D=5  win_rate_train=0.656
+[180/200] W_train=123  W_opp=52  D=5  win_rate_train=0.683
+[200/200] W_train=138  W_opp=55  D=7  win_rate_train=0.690
+
+
+[5/20] W_train=4  W_opp=1  D=0  win_rate_train=0.800
+[10/20] W_train=7  W_opp=2  D=1  win_rate_train=0.700
+[15/20] W_train=11  W_opp=3  D=1  win_rate_train=0.733
+[20/20] W_train=15  W_opp=4  D=1  win_rate_train=0.750
+
+
+
+=== Entrenamiento de Q(s,a) + MCTS para Connect4 (modo=old_play) ===
+[20/200] W_train=15  W_opp=5  D=0  win_rate_train=0.750
+[40/200] W_train=34  W_opp=6  D=0  win_rate_train=0.850
+[60/200] W_train=53  W_opp=7  D=0  win_rate_train=0.883
+[80/200] W_train=69  W_opp=11  D=0  win_rate_train=0.863
+[100/200] W_train=87  W_opp=13  D=0  win_rate_train=0.870
+[120/200] W_train=105  W_opp=15  D=0  win_rate_train=0.875
+[140/200] W_train=122  W_opp=18  D=0  win_rate_train=0.871
+[160/200] W_train=141  W_opp=19  D=0  win_rate_train=0.881
+[180/200] W_train=161  W_opp=19  D=0  win_rate_train=0.894
+[200/200] W_train=180  W_opp=20  D=0  win_rate_train=0.900
+
+
+
+[20/200] W_train=19  W_opp=1  D=0  win_rate_train=0.950
+[40/200] W_train=39  W_opp=1  D=0  win_rate_train=0.975
+[20/200] W_train=19  W_opp=1  D=0  win_rate_train=0.950
+[40/200] W_train=39  W_opp=1  D=0  win_rate_train=0.975
+[60/200] W_train=58  W_opp=1  D=1  win_rate_train=0.967
+[80/200] W_train=78  W_opp=1  D=1  win_rate_train=0.975
+[100/200] W_train=98  W_opp=1  D=1  win_rate_train=0.980
+[120/200] W_train=116  W_opp=3  D=1  win_rate_train=0.967
+[140/200] W_train=134  W_opp=5  D=1  win_rate_train=0.957
+[160/200] W_train=153  W_opp=5  D=2  win_rate_train=0.956
+[180/200] W_train=173  W_opp=5  D=2  win_rate_train=0.961
+[200/200] W_train=193  W_opp=5  D=2  win_rate_train=0.965
