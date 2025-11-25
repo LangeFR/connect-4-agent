@@ -17,6 +17,7 @@ from connect4.utils import (
 
 from .config import MCTSConfig, get_default_config, MODEL_PATH
 from .mcts import run_mcts_for_state
+from .storage import save_binary_policy, load_binary_policy
 
 
 
@@ -301,86 +302,31 @@ class Connect4MCTSAgent:
     # Persistencia de Q-table
     # ---------------------------------------------------------------------
 
+    # ---------------------------------------------------------------------
+    # Persistencia de Q-table (versión binaria)
+    # ---------------------------------------------------------------------
+
     def load_policy(self, path: str = MODEL_PATH) -> None:
         """
-        Carga la Q-table desde un JSON con formato:
+        Carga la Q-table desde un archivo binario comprimido (.pkl.gz)
+        en el formato definido por agent.storage.
 
-        {
-          "state_key": {
-            "0": {"N": 10, "Q": 0.3},
-            "3": {"N": 15, "Q": 0.8}
-          },
-          ...
-        }
+        Si el archivo no existe o está corrupto:
+            - la Q-table queda como {} (sin política previa),
+            - no se lanza excepción.
         """
-        if not os.path.exists(path):
-            return
-
-        with open(path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-
-        q_table: QTable = {}
-
-        if not isinstance(raw, dict):
-            return
-
-        for state_key, actions_dict in raw.items():
-            if not isinstance(actions_dict, dict):
-                continue
-
-            state_actions: Dict[int, Tuple[float, float]] = {}
-
-            for action_str, stats in actions_dict.items():
-                try:
-                    action_int = int(action_str)
-                except (TypeError, ValueError):
-                    continue
-
-                if not isinstance(stats, dict):
-                    continue
-
-                N = float(stats.get("N", 0.0))
-                Q_val = float(stats.get("Q", 0.0))
-
-                if N > 0:
-                    state_actions[action_int] = (N, Q_val)
-
-            if state_actions:
-                q_table[state_key] = state_actions
-
-        self.q_table = q_table
+        self.q_table = load_binary_policy(path)
         self._dirty = False
 
     def save_policy(self, path: str = MODEL_PATH) -> None:
         """
-        Guarda la Q-table en un JSON con formato:
+        Guarda la Q-table en disco como archivo binario comprimido (.pkl.gz),
+        usando la representación compacta definida en agent.storage.
 
-        {
-          "state_key": {
-            "0": {"N": 10, "Q": 0.3},
-            "3": {"N": 15, "Q": 0.8}
-          },
-          ...
-        }
+        Si _dirty es False, no hace nada.
         """
         if not self._dirty:
             return
 
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-
-        serializable: Dict[str, Dict[str, Dict[str, float]]] = {}
-
-        for state_key, actions in self.q_table.items():
-            action_dict: Dict[str, Dict[str, float]] = {}
-            for action_int, (N, Q_val) in actions.items():
-                action_dict[str(action_int)] = {
-                    "N": float(N),
-                    "Q": float(Q_val),
-                }
-            if action_dict:
-                serializable[state_key] = action_dict
-
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(serializable, f, ensure_ascii=False)
-
+        save_binary_policy(self.q_table, path)
         self._dirty = False

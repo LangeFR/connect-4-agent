@@ -26,12 +26,12 @@ with open(CONFIG_PATH, "r", encoding="utf-8") as f:
 # Rutas
 OLD_MODEL_PATH = TRAIN_CONFIG.get(
     "paths", {}
-).get("baseline_model_path", "models/baselines/old_policy_model.json")
+).get("baseline_model_path", "models/snapshots/policy_model.json")
 
 # Modo de entrenamiento:
 # "random"   -> vs agente aleatorio
 # "self_play"-> self-play simétrico
-# "old_play" -> vs política congelada (old_policy_model.json)
+# "old_play" -> vs política congelada (policy_model.json)
 TRAIN_MODE = TRAIN_CONFIG.get("train", {}).get("mode", "old_play")
 
 # ¿El agente que entrena debe bloquear mates en 1?
@@ -232,7 +232,7 @@ def main() -> None:
                 f"W_train={wins_train}  W_opp={wins_opp}  D={draws}  win_rate_train={win_rate:.3f}"
             )
 
-    # Guardar la Q-table nueva como policy_model.json
+    # Guardar la Q-table nueva como policy_model.pkl.gz
     agent_new.save_policy(MODEL_PATH)
     print(f"Modelo actualizado guardado en {MODEL_PATH}")
 

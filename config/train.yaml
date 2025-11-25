@@ -3,7 +3,7 @@ train:
   #  - "random"   -> vs agente aleatorio
   #  - "self_play"-> self-play simétrico
   #  - "old_play" -> vs política congelada (baseline)
-  mode: "old_play"
+  mode: "self_play"
 
   # Número de partidas de entrenamiento
   num_games: 200
@@ -31,7 +31,7 @@ logging:
 
 paths:
   # Ruta del modelo baseline congelado (antes OLD_MODEL_PATH / BASELINE_MODEL_PATH)
-  baseline_model_path: "models/baselines/old_policy_model.json"
+  baseline_model_path: "models/baselines/policy_model.json"
 
   # Ruta donde volcar estados finales de entrenamiento
   train_dump_path: "debug/train_final_states.txt"

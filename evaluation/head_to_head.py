@@ -15,7 +15,7 @@ from metrics import evaluate_head_to_head
 
 # Rutas explícitas para modelo actual y modelo viejo
 NEW_MODEL_PATH = "connect4/agente/policy_model.json"
-OLD_MODEL_PATH = "connect4/metrics/old_policy_model.json"
+OLD_MODEL_PATH = "connect4/metrics/policy_model.json"
 
 
 def main() -> None:
