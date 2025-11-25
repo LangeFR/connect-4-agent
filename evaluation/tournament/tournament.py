@@ -73,19 +73,21 @@ def play(
         total_games += 1
         # Decide who goes first based on the distribution
         if rng.random() < first_player_distribution:
-            first, second = (a, a_policy()), (b, b_policy())
+            first_participant, second_participant = a, b
+            first_policy, second_policy = a_policy(), b_policy()
         else:
-            first, second = (b, b_policy()), (a, a_policy())
+            first_participant, second_participant = b, a
+            first_policy, second_policy = b_policy(), a_policy()
 
         # Mount agents
-        first[1].mount()
-        second[1].mount()
+        first_policy.mount()
+        second_policy.mount()
 
         state = ConnectState()
         game_history: Game = Game()
 
         while not state.is_final():
-            _, current_policy = first if state.player == -1 else second
+            current_policy = first_policy if state.player == -1 else second_policy
             action = current_policy.act(state.board)
             game_history.append((state.board.copy().tolist(), int(action)))
             state = state.transition(int(action))
@@ -93,10 +95,17 @@ def play(
         games.append(game_history)
 
         # Determine winner
-        if state.get_winner() == -1:
-            a_wins += 1
-        elif state.get_winner() == 1:
-            b_wins += 1
+        winner = state.get_winner()
+        if winner == -1:
+            if first_participant == a:
+                a_wins += 1
+            else:
+                b_wins += 1
+        elif winner == 1:
+            if second_participant == a:
+                a_wins += 1
+            else:
+                b_wins += 1
         else:
             draws += 1
 
